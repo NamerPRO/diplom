@@ -1,6 +1,6 @@
-import math
+import time
 from abc import ABC, abstractmethod
-from typing import Optional, List, Union, Deque, cast, Callable, Final, Any, Tuple
+from typing import Optional, List, Union, Deque, cast, Callable, Final, Tuple
 
 import numpy as np
 from overrides import override
@@ -8,6 +8,7 @@ from overrides import override
 from language_model.counters import Counter, FrequenciesCounter
 from language_model.ngram import NGram
 from language_model.smoothings import AdditiveSmoothing, SimpleGoodTuringSmoothing, KatzSmoothing
+from utility.wfst import WFST
 
 
 class BaseLM(ABC):
@@ -16,12 +17,12 @@ class BaseLM(ABC):
     def __init__(
             self,
             n: int,
-            corpus_path: str,
+            # corpus_path: str,
             counter: Counter,
             is_acceptable_character: Optional[Callable[[str], bool]] = None
     ) -> None:
         self._n = n
-        self._corpus_path = corpus_path
+        # self._corpus_path = corpus_path
         self._counter = counter
         self._model_probabilities = None
         self.__is_acceptable_character = is_acceptable_character or BaseLM.__is_acceptable_character
@@ -35,7 +36,8 @@ class BaseLM(ABC):
     def __is_acceptable_character(character: str) -> bool:
         return character.isalpha() or character in {'<', '>', '/'}
 
-    def __corpus_reader(self, ngram: NGram, corpus_path: str, initial_character: str, case: str = 'count') -> Tuple[float, float]:
+    def __corpus_reader(self, ngram: NGram, corpus_path: str, initial_character: str, case: str = 'count') -> Tuple[
+        float, float]:
         perplexity, n = 0.0, 0
         with open(corpus_path, 'r', encoding='utf8') as f:
             char = initial_character
@@ -110,11 +112,12 @@ class NoSmoothingLM(BaseLM):
             corpus_path: str,
             is_acceptable_character: Optional[Callable[[str], bool]] = None
     ) -> None:
-        super().__init__(n, corpus_path, Counter(n), is_acceptable_character)
+        super().__init__(n, Counter(n), is_acceptable_character)
+        self.__corpus_path = corpus_path
 
     @override
     def train(self):
-        self._count_all_ngrams(self._corpus_path, self._counter)
+        self._count_all_ngrams(self.__corpus_path, self._counter)
         vocabulary_size = len(self.vocabulary)
         self._model_probabilities = AdditiveSmoothing(self._counter, vocabulary_size=vocabulary_size)
 
@@ -127,11 +130,12 @@ class LaplaceSmoothingLM(BaseLM):
             corpus_path: str,
             is_acceptable_character: Optional[Callable[[str], bool]] = None
     ) -> None:
-        super().__init__(n, corpus_path, Counter(n), is_acceptable_character)
+        super().__init__(n, Counter(n), is_acceptable_character)
+        self.__corpus_path = corpus_path
 
     @override
     def train(self) -> None:
-        self._count_all_ngrams(self._corpus_path, self._counter)
+        self._count_all_ngrams(self.__corpus_path, self._counter)
         vocabulary_size = len(self.vocabulary)
         self._model_probabilities = AdditiveSmoothing(self._counter, addition=1, vocabulary_size=vocabulary_size)
 
@@ -148,12 +152,13 @@ class AdditiveSmoothingLM(BaseLM):
         if addition <= 0:
             raise ValueError(
                 'Addition size must be positive. If you intend to use addition=0 consider using NoSmoothingLM.')
-        super().__init__(n, corpus_path, Counter(n), is_acceptable_character)
+        super().__init__(n, Counter(n), is_acceptable_character)
+        self.__corpus_path = corpus_path
         self.__addition = addition
 
     @override
     def train(self) -> None:
-        self._count_all_ngrams(self._corpus_path, self._counter)
+        self._count_all_ngrams(self.__corpus_path, self._counter)
         vocabulary_size = len(self.vocabulary)
         self._model_probabilities = AdditiveSmoothing(self._counter, vocabulary_size, self.__addition)
 
@@ -166,11 +171,12 @@ class SimpleGoodTuringSmoothingLM(BaseLM):
             corpus_path: str,
             is_acceptable_character: Optional[Callable[[str], bool]] = None
     ) -> None:
-        super().__init__(n, corpus_path, FrequenciesCounter(n), is_acceptable_character)
+        super().__init__(n, FrequenciesCounter(n), is_acceptable_character)
+        self.__corpus_path = corpus_path
 
     @override
     def train(self) -> None:
-        self._count_all_ngrams(self._corpus_path, self._counter)
+        self._count_all_ngrams(self.__corpus_path, self._counter)
         self._model_probabilities = SimpleGoodTuringSmoothing(cast(FrequenciesCounter, self._counter), self.vocabulary)
 
 
@@ -180,22 +186,63 @@ class KatzSmoothingLM(BaseLM):
     def __init__(
             self,
             n: int,
+            k: int = 5,
+            reserved_probability: float = 0.001,
+            is_acceptable_character: Optional[Callable[[str], bool]] = None,
+            counter: Optional[Counter] = None
+    ) -> None:
+        if reserved_probability >= 1 - KatzSmoothingLM.eps or reserved_probability <= -KatzSmoothingLM.eps:
+            raise ValueError("Probability reserved for unknown tokens must be in range (0, 1)")
+        super().__init__(n, counter, is_acceptable_character)
+        self.__k = k
+        self.__unknown_probability = reserved_probability
+        self.__wfst: Optional[WFST] = None
+
+    @classmethod
+    def from_train_corpus(
+            cls,
+            n: int,
             corpus_path: str,
             k: int = 5,
             reserved_probability: float = 0.001,
             is_acceptable_character: Optional[Callable[[str], bool]] = None
-    ) -> None:
-        if reserved_probability >= 1 - KatzSmoothingLM.eps or reserved_probability <= -KatzSmoothingLM.eps:
-            raise ValueError("Probability reserved for unknown tokens must be in range (0, 1)")
-        super().__init__(n, corpus_path, FrequenciesCounter(n), is_acceptable_character)
-        self.__k = k
-        self.__unknown_probability = reserved_probability
+    ) -> 'KatzSmoothingLM':
+        obj = KatzSmoothingLM(n, k, reserved_probability, is_acceptable_character, FrequenciesCounter(n))
+        obj._corpus_path = corpus_path
+        return obj
+
+    @classmethod
+    def from_arpa_file(
+            cls,
+            n: int,
+            arpa_file_path: str,
+            k: int = 5,
+            reserved_probability: float = 0.001,
+            is_acceptable_character: Optional[Callable[[str], bool]] = None,
+    ) -> 'KatzSmoothingLM':
+        obj = KatzSmoothingLM(n, k, reserved_probability, is_acceptable_character, counter=None)
+        obj._arpa_file_path = arpa_file_path
+        return obj
 
     @override
     def train(self) -> None:
-        self._count_all_ngrams(self._corpus_path, self._counter)
-        self._model_probabilities = KatzSmoothing(cast(FrequenciesCounter, self._counter), self.__k,
-                                                  self.__unknown_probability)
+        if hasattr(self, '_corpus_path'):
+            self._count_all_ngrams(self._corpus_path, self._counter)
+            self._model_probabilities = KatzSmoothing(cast(FrequenciesCounter, self._counter), self._n, self.__k,
+                                                      self.__unknown_probability, path_to_arpa_file=None)
+        elif hasattr(self, '_arpa_file_path'):
+            self._model_probabilities = KatzSmoothing(None, self._n, self.__k, self.__unknown_probability,
+                                                      path_to_arpa_file=self._arpa_file_path)
+        else:
+            raise ValueError("Object must have either '_corpus_path' or '_arpa_file_path' attributes. Make sure you have created an object via 'from_train_corpus' or 'from_arpa_file' methods.")
+
+    def build_wfst(self):
+        if self._model_probabilities is None:
+            raise ValueError("Model must be trained first.")
+        if self.__wfst is None:
+            self.__wfst = self._model_probabilities.build_wfst()
+            self.__wfst.set_alphabet(self.vocabulary)
+        return self.__wfst
 
 
 def xxx(cc: str) -> bool:
@@ -205,6 +252,41 @@ def xxx(cc: str) -> bool:
 if __name__ == '__main__':
     path = 'C:/Users/PeterA/Desktop/vkr/test/1.txt'
     path2 = 'C:/Users/PeterA/Desktop/vkr/test/2.txt'
+    arpa = './language_model/katz_lm_1737559161.ARP'
+
+    # model = KatzSmoothingLM(
+    #     n=3,
+    #     corpus_path=path,
+    #     is_acceptable_character=xxx,
+    #     arpa_file_path=None  # no counter if path_to_arpa_given
+    # )
+
+    model = KatzSmoothingLM.from_train_corpus(
+        n=3,
+        corpus_path=path,
+        k=5,
+        reserved_probability=0.1,
+        is_acceptable_character=xxx
+    )
+
+    # model = KatzSmoothingLM.from_arpa_file(
+    #     n=3,
+    #     arpa_file_path="./language_model/KATZ_LM_1737650077.ARP",
+    #     k=5,
+    #     reserved_probability=0.1,
+    #     is_acceptable_character=xxx
+    # )
+
+    model.train()
+    print(model.vocabulary)
+    wfst = model.build_wfst()
+    wfst.view()
+    time.sleep(1)
+    wfst.determinize()
+    wfst.minimize()
+    wfst.view()
+
+    exit(0)
 
     # model0 = SimpleGoodTuringSmoothingLM(n=3, corpus_path=path, is_acceptable_character=xxx)
     # model0.train()

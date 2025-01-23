@@ -1,7 +1,10 @@
 import itertools
-from collections import deque, defaultdict
+import logging
+import time
+from collections import defaultdict
 from copy import deepcopy
-from typing import List, Dict, Deque, Tuple, Final, Set, Any
+from datetime import datetime
+from typing import Dict, Tuple, Final, Set, Any, Optional
 
 import numpy as np
 
@@ -9,6 +12,8 @@ import utility.log_math as lmath
 from language_model.counters import Counter, FrequenciesCounter
 from language_model.ngram import NGram
 from language_model.node import Node
+from utility import arpafile
+from utility.wfst import WFST
 
 
 class AdditiveSmoothing:
@@ -100,14 +105,39 @@ class KatzSmoothing:
 
     def __init__(
             self,
-            counter: FrequenciesCounter,
+            counter: Optional[FrequenciesCounter],
+            n: int,
             k: int = 5,
-            reserved_probability: float = 0.001
+            reserved_probability: float = 0.001,
+            path_to_arpa_file: Optional[str] = None
     ) -> None:
         self.__counter = counter
+        self.__n = n
         self.__k = k
         self.__reserved_probability = reserved_probability
-        self.__top, self.__bottom = self.__precompute_adjustment_values()
+        self.__observed_ngrams_probabilities: Dict[int, Dict[str, float]] = defaultdict(dict)
+        self.__alpha: Dict[str, float] = {}
+        if path_to_arpa_file:
+            self.__observed_ngrams_probabilities, self.__alpha = arpafile.read_arpa_lm(path_to_arpa_file)
+            logging.log(logging.INFO, f"Katz language model was restored from ARPA file: {path_to_arpa_file}")
+        else:
+            self.__precompute_adjustment_values(self.__counter.root, NGram.empty())
+            logging.log(logging.INFO, "Katz adjustments were successfully precomputed.")
+            self.__precompute_probabilities(self.__counter.root, NGram.empty())
+            save_lm_path = f'./language_model/KATZ_LM_{int(time.time())}.ARP'
+            arpafile.write_arpa_lm(save_lm_path, self.__n, (self.__observed_ngrams_probabilities, self.__alpha))
+            logging.log(logging.INFO, f"Katz language model was saved to ARPA file: {save_lm_path}. You will be able to restore model from it later on.")
+
+    def __precompute_probabilities(self, node: Node, ngram: NGram) -> None:
+        for token, child in node.children.items():
+            ngram.append(token)
+            n = len(ngram)
+            if child.value > 0:
+                self.__observed_ngrams_probabilities[n][ngram.as_string()] = self.__p_katz(child.value, n, node.value) if n > 1\
+                    else child.value / self.__counter.get_total_count() * (1 - self.__reserved_probability)
+            self.__precompute_probabilities(child, ngram)
+            ngram.shorten(direction='right')
+            logging.log(logging.INFO, "Katz probabilities were successfully precomputed.")
 
     def __dr(self, r: int, i: int) -> float:
         if r > self.__k:
@@ -121,70 +151,95 @@ class KatzSmoothing:
     def __get_frequencies_safe(self, i: int, r: int):
         return self.__counter.frequencies[i][r] if r in self.__counter.frequencies[i] else KatzSmoothing.__eps
 
-    def get_probabilities(self, ngram: NGram) -> List[float]:
-        n = len(ngram)
-        probabilities = [0.0 for _ in range(n)]
-        for i in range(n):
-            probabilities[n - i - 1] = np.log(self.__get_probability_inner(deepcopy(ngram)))
-            ngram.shorten(direction="right")
-        return probabilities
+    # def get_probabilities(self, ngram: NGram) -> List[float]:
+    #     n = len(ngram)
+    #     probabilities = [0.0 for _ in range(n)]
+    #     for i in range(n):
+    #         probabilities[n - i - 1] = np.log(self.__get_probability_inner(deepcopy(ngram)))
+    #         ngram.shorten(direction="right")
+    #     return probabilities
+    #
+    # def get_probability(self, ngram: NGram) -> float:
+    #     return np.log(self.__get_probability_inner(deepcopy(ngram)))
 
-    def get_probability(self, ngram: NGram) -> float:
-        return np.log(self.__get_probability_inner(deepcopy(ngram)))
+    def build_wfst(self) -> WFST:
+        wfst = WFST(self.__n)
+        self.__wfst_insert_seen_ngrams(wfst)
+        self.__wfst_insert_backoff(wfst)
+        unknown_token = NGram.get_sys_token('unknown')
+        wfst.add_state(unknown_token)
+        wfst.add_arc(unknown_token, WFST.TRUE_EPS, (WFST.TRUE_EPS, WFST.TRUE_EPS), 0)
+        wfst.add_arc(WFST.TRUE_EPS, unknown_token, (unknown_token, unknown_token), self.__reserved_probability)
+        return wfst
 
-    def __get_probability_inner(self, ngram: NGram) -> float:
-        n = len(ngram)
-        counts = self.__counter.get_count_n(ngram)
-        r = counts[n - 1]
-        if n == 1 and ngram[0] == NGram.get_sys_token('unknown'):
-            return self.__reserved_probability
-        if r > 0:
-            return self.__p_katz(r, n, counts[n - 2]) if n > 1 else r / self.__counter.get_total_count() * (
-                    1 - self.__reserved_probability)
-        if n > 1 and counts[n - 2] == 0:
-            ngram.shorten()
-            return self.__get_probability_inner(ngram)
+    def __wfst_insert_backoff(self, wfst: WFST) -> None:
+        for context, value in self.__alpha.items():
+            ngram_context = NGram.from_words_list(context.split(' '))
+            self.__build_part(wfst, ngram_context, WFST.EPS, is_backoff=True)
+
+    def __wfst_insert_seen_ngrams(self, wfst: WFST) -> None:
+        for n in self.__observed_ngrams_probabilities:
+            for ngram_str, weight in self.__observed_ngrams_probabilities[n].items():
+                ngram = NGram.from_words_list(ngram_str.split(' '))
+                self.__build_part(wfst, ngram, ngram[-1], weight, is_backoff=False)
+
+    def __build_part(self, wfst: WFST, ngram: NGram, label: str, weight: float = None, is_backoff=False) -> None:
         context = deepcopy(ngram)
-        context.shorten(direction="right")
-        ngram.shorten()
-        return self.__get_alpha(context) * self.__get_probability_inner(ngram)
+        cur_state = context.as_string() if is_backoff else context.shorten(direction="right").as_string()
+        weight = weight or self.__get_alpha(context)
+        if not cur_state:
+            cur_state = WFST.TRUE_EPS
+        if not wfst.has_state(cur_state):
+            wfst.add_state(cur_state)
+            if cur_state.endswith(NGram.get_sys_token('end')):
+                wfst.mark_as_final(cur_state, 0)
+        if is_backoff:
+            next_state = context.shorten().as_string()
+        elif len(ngram) == self.__n:
+            next_state = deepcopy(ngram).shorten().as_string()
+        else:
+            next_state = ngram.as_string()
+        if not next_state:
+            next_state = WFST.TRUE_EPS
+        if cur_state == WFST.TRUE_EPS and next_state == NGram.get_sys_token('start')\
+                or label == NGram.get_sys_token('start'):
+            return
+        no_state_flag = not wfst.has_state(next_state)
+        if no_state_flag or not wfst.has_arc(cur_state, next_state):
+            state = wfst.add_state(next_state)
+            if not wfst.is_final(cur_state):
+                wfst.add_arc(cur_state, state.name, (label, label), weight)
+        if next_state.endswith(NGram.get_sys_token('end')):
+            wfst.mark_as_final(next_state, 0)
 
     def __p_katz(self, r: int, n: int, cnt: int) -> float:
         return self.__dr(r, n - 1) * r / cnt
 
-    def __precompute_adjustment_values(self) -> Tuple[Dict, Dict]:
-        top, bottom = defaultdict(float), defaultdict(float)
-        self.__precompute_adjustment_values_inner(self.__counter.root, deque(), top, bottom)
-        return top, bottom
-
     def __get_alpha(self, context: NGram) -> float:
-        key = tuple(context.as_deque())
-        return self.__top[key] / self.__bottom[key]
+        key = context.as_string()
+        return self.__alpha[key] if key in self.__alpha else 1
 
     def __force_in_range(self, x: float, floor: int = __eps, ceil: int = 1) -> float:
         return max(min(x, ceil), floor)
 
-    def __precompute_adjustment_values_inner(self, node: Node, ngram: Deque[str], top: Dict, bottom: Dict) -> None:
+    def __precompute_adjustment_values(self, node: Node, ngram: NGram) -> None:
         for token, child in node.children.items():
             ngram.append(token)
-            key = tuple(ngram)
             n = len(ngram) + 1
-            ngram2 = deepcopy(ngram)
-            ngram2.popleft()
+            context = deepcopy(ngram)
+            context.shorten()
+            top, bottom = 0, 0
             for token2, child2 in child.children.items():
-                ngram2.append(token2)
-                context = NGram.from_words_list(ngram2)
+                context.append(token2)
                 counts = self.__counter.get_count_n(context)
                 if child2.value > 0:
-                    top[key] += self.__p_katz(child2.value, n, child.value)
+                    top += self.__p_katz(child2.value, n, child.value)
                     if n > 2:
-                        bottom[key] += self.__p_katz(counts[-1], n - 1, counts[-2])
+                        bottom += self.__p_katz(counts[-1], n - 1, counts[-2])
                     else:
-                        bottom[key] += counts[-1] / self.__counter.get_total_count() * (
-                                1 - self.__reserved_probability)
-                ngram2.pop()
-            top[key] = self.__force_in_range(1 - top[key])
-            bottom[key] = self.__force_in_range(1 - bottom[key])
-            if n < self.__counter.n:
-                self.__precompute_adjustment_values_inner(child, ngram, top, bottom)
-            ngram.pop()
+                        bottom += counts[-1] / self.__counter.get_total_count() * (1 - self.__reserved_probability)
+                context.shorten(direction='right')
+            self.__alpha[ngram.as_string()] = self.__force_in_range(1 - top) / self.__force_in_range(1 - bottom)
+            if n < self.__n:
+                self.__precompute_adjustment_values(child, ngram)
+            ngram.shorten(direction='right')
