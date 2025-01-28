@@ -1,6 +1,6 @@
 import numpy as np
 
-from language_model.ngram import NGram
+from utils.ngram import NGram
 
 
 class TrieCountStorage(object):

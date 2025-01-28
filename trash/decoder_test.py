@@ -2,8 +2,6 @@ import heapq
 
 import numpy as np
 
-from acoustic_model.hmm import HMM
-
 
 class ViterbiDecoder:
 

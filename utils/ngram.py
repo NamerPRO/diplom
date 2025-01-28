@@ -7,10 +7,10 @@ from typing import Final, Dict, Literal, List, Tuple, Union, Deque
 class NGram:
     Token = Literal['start', 'end', 'silence', 'unknown']  # NOSONAR
     __sys_tokens: Final[Dict[Token, str]] = {
-        'start': '[s]',
-        'end': '[/s]',
-        'silence': '[sil]',
-        'unknown': '[unk]'
+        'start': '<s>',
+        'end': '</s>',
+        'silence': '<sil>',
+        'unknown': '<unk>'
     }
 
     def __init__(self, n: int) -> None:
@@ -84,4 +84,7 @@ class NGram:
 
     def __getitem__(self, item: int) -> str:
         return self.__ngram[item]
+
+    def __setitem__(self, key: int, value: str) -> None:
+        self.__ngram[key] = value
 

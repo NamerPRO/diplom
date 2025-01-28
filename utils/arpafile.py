@@ -1,12 +1,16 @@
 import logging
 import os
 from collections import defaultdict
-from typing import List, Dict, Tuple
+from typing import List, Dict, Tuple, Set
+
+from utils.ngram import NGram
 
 
-def read_arpa_lm(path: str) -> Tuple[Dict[int, Dict[str, float]], Dict[str, float]]:
+def read_arpa_lm(path: str) -> Tuple[Dict[int, Dict[str, float]], Dict[str, float], Set[str], int, float]:
     lmdata = (defaultdict(dict), {})
     fdata: List[int] = []
+    vocabulary: Set[str] = set()
+    lm_n, reserved_probability = 0, 0.0
     try:
         with open(path, 'r') as f:
             f.readline()
@@ -14,6 +18,7 @@ def read_arpa_lm(path: str) -> Tuple[Dict[int, Dict[str, float]], Dict[str, floa
             while line.strip(' ') != '\n':
                 fdata.append(int(line.split('=')[1]))
                 line = f.readline()
+            lm_n = len(fdata)
             for i, n in enumerate(fdata):
                 if i > 0:
                     f.readline()
@@ -21,6 +26,11 @@ def read_arpa_lm(path: str) -> Tuple[Dict[int, Dict[str, float]], Dict[str, floa
                 for _ in range(n):
                     if i < len(fdata) - 1:
                         prob, ngram, alpha = f.readline().split('\t')
+                        if i == 0:
+                            vocabulary.add(ngram)
+                            if ngram == NGram.get_sys_token('unknown'):
+                                reserved_probability = float(prob)
+                                continue
                         lmdata[0][i + 1][ngram] = float(prob)
                         lmdata[1][ngram] = float(alpha)
                     else:
@@ -29,18 +39,24 @@ def read_arpa_lm(path: str) -> Tuple[Dict[int, Dict[str, float]], Dict[str, floa
     except Exception as e:
         logging.log(logging.ERROR, 'An error occurred while attempting to read ARPA file. Is it valid?')
         raise e
-    return lmdata
+    return lmdata[0], lmdata[1], vocabulary, lm_n, reserved_probability
 
-def write_arpa_lm(path: str, n: int, data: Tuple[Dict[int, Dict[str, float]], Dict[str, float]]) -> None:
+
+def write_arpa_lm(path: str, n: int, data: Tuple[Dict[int, Dict[str, float]], Dict[str, float], float]) -> None:
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, 'w') as f:
             f.write('\\data\\\n')
             for i in range(n):
-                f.write(f'ngram {i + 1}={len(data[0][i + 1])}\n')
+                count = len(data[0][i + 1])
+                if i == 0:
+                    count += 1
+                f.write(f'ngram {i + 1}={count}\n')
             for i in range(n):
                 f.write(' \n')
                 f.write(f'\\{i + 1}-grams:\n')
+                if i == 0:
+                    f.write(f'{data[2]}\t{NGram.get_sys_token('unknown')}\t0\n')
                 for (ngram, prob) in data[0][i + 1].items():
                     if i < n - 1:
                         backoff = data[1][ngram] if ngram in data[1] else 0

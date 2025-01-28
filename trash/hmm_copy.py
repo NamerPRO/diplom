@@ -1,9 +1,8 @@
-from typing import Dict, Final
+from typing import Final
 
 import numpy as np
 
-from acoustic_model.gmm import GMM
-from acoustic_model.hmm_state import HMMState
+from core.acoustic_model.hmm_state import HMMState
 
 
 class HMMGMM:

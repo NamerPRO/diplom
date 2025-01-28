@@ -1,6 +1,6 @@
 import numpy as np
 
-from acoustic_model.gmm import GMM
+from core.acoustic_model.gmm import GMM
 
 
 class HMMState:

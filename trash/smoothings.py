@@ -2,10 +2,10 @@ from typing import List
 
 import numpy as np
 
-import utility.log_math as lmath
-from language_model.counters import Counter, FrequenciesCounter
-from language_model.ngram import NGram
-from language_model.node import Node
+import utils.log_math as lmath
+from utils.counter.counters import Counter, FrequenciesCounter
+from utils.ngram import NGram
+from utils.counter.node import Node
 
 
 class AdditiveSmoothing:

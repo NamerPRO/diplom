@@ -1,14 +1,13 @@
 from typing import List
 
-import copy
 import numpy as np
 from matplotlib import pyplot as plt
 from scipy.stats import norm
 from sklearn import datasets
 
-from acoustic_model.gmm import GMM
-from acoustic_model.hmm_state import HMMState
-import utility.log_math as lmath
+from core.acoustic_model.gmm import GMM
+from core.acoustic_model.hmm_state import HMMState
+import utils.log_math as lmath
 
 
 class HMM:

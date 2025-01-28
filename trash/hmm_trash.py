@@ -1,12 +1,11 @@
-from abc import ABC, abstractmethod
-from typing import Final, List
+from typing import List
 
 import numpy as np
 from matplotlib import pyplot as plt
 from sklearn import datasets
 
-from acoustic_model.gmm import GMM
-from acoustic_model.hmm_state import HMMState
+from core.acoustic_model.gmm import GMM
+from core.acoustic_model.hmm_state import HMMState
 
 from scipy.stats import norm
 

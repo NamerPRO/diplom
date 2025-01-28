@@ -3,10 +3,9 @@ from copy import deepcopy
 from typing import List, Deque, Tuple
 
 from overrides import overrides
-from sortedcontainers import SortedDict
 
-from language_model.ngram import NGram
-from language_model.node import Node
+from utils.ngram import NGram
+from utils.counter.node import Node
 
 
 class Counter:

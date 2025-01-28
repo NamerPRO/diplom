@@ -3,17 +3,17 @@ import logging
 import time
 from collections import defaultdict
 from copy import deepcopy
-from datetime import datetime
 from typing import Dict, Tuple, Final, Set, Any, Optional
 
 import numpy as np
 
-import utility.log_math as lmath
-from language_model.counters import Counter, FrequenciesCounter
-from language_model.ngram import NGram
-from language_model.node import Node
-from utility import arpafile
-from utility.wfst import WFST
+import utils.log_math as lmath
+from utils.counter.counters import Counter, FrequenciesCounter
+from core.transducers.grammar.language_models import KatzSmoothingLM
+from utils.ngram import NGram
+from utils.counter.node import Node
+from utils import arpafile
+from utils.pyfoma_wfst import WFST
 
 
 class AdditiveSmoothing:
@@ -126,14 +126,16 @@ class KatzSmoothing:
             self.__precompute_probabilities(self.__counter.root, NGram.empty())
             save_lm_path = f'./language_model/KATZ_LM_{int(time.time())}.ARP'
             arpafile.write_arpa_lm(save_lm_path, self.__n, (self.__observed_ngrams_probabilities, self.__alpha))
-            logging.log(logging.INFO, f"Katz language model was saved to ARPA file: {save_lm_path}. You will be able to restore model from it later on.")
+            logging.log(logging.INFO,
+                        f"Katz language model was saved to ARPA file: {save_lm_path}. You will be able to restore model from it later on.")
 
     def __precompute_probabilities(self, node: Node, ngram: NGram) -> None:
         for token, child in node.children.items():
             ngram.append(token)
             n = len(ngram)
             if child.value > 0:
-                self.__observed_ngrams_probabilities[n][ngram.as_string()] = self.__p_katz(child.value, n, node.value) if n > 1\
+                self.__observed_ngrams_probabilities[n][ngram.as_string()] = self.__p_katz(child.value, n,
+                                                                                           node.value) if n > 1 \
                     else child.value / self.__counter.get_total_count() * (1 - self.__reserved_probability)
             self.__precompute_probabilities(child, ngram)
             ngram.shorten(direction='right')
@@ -163,19 +165,20 @@ class KatzSmoothing:
     #     return np.log(self.__get_probability_inner(deepcopy(ngram)))
 
     def build_wfst(self) -> WFST:
-        wfst = WFST(self.__n)
+        wfst = WFST(NGram(self.__n - 1).as_string())
         self.__wfst_insert_seen_ngrams(wfst)
         self.__wfst_insert_backoff(wfst)
         unknown_token = NGram.get_sys_token('unknown')
         wfst.add_state(unknown_token)
-        wfst.add_arc(unknown_token, WFST.TRUE_EPS, (WFST.TRUE_EPS, WFST.TRUE_EPS), 0)
+        wfst.add_arc(unknown_token, WFST.TRUE_EPS, (KatzSmoothingLM.BACKOFF_DISAMBIGUITY_SYMBOL, WFST.EPS), 0)
         wfst.add_arc(WFST.TRUE_EPS, unknown_token, (unknown_token, unknown_token), self.__reserved_probability)
+        wfst.remove_epsilons()
         return wfst
 
     def __wfst_insert_backoff(self, wfst: WFST) -> None:
         for context, value in self.__alpha.items():
             ngram_context = NGram.from_words_list(context.split(' '))
-            self.__build_part(wfst, ngram_context, WFST.EPS, is_backoff=True)
+            self.__build_part(wfst, ngram_context, (KatzSmoothingLM.BACKOFF_DISAMBIGUITY_SYMBOL, WFST.EPS), is_backoff=True)
 
     def __wfst_insert_seen_ngrams(self, wfst: WFST) -> None:
         for n in self.__observed_ngrams_probabilities:
@@ -183,7 +186,7 @@ class KatzSmoothing:
                 ngram = NGram.from_words_list(ngram_str.split(' '))
                 self.__build_part(wfst, ngram, ngram[-1], weight, is_backoff=False)
 
-    def __build_part(self, wfst: WFST, ngram: NGram, label: str, weight: float = None, is_backoff=False) -> None:
+    def __build_part(self, wfst: WFST, ngram: NGram, label: str | Tuple[str, str], weight: float = None, is_backoff=False) -> None:
         context = deepcopy(ngram)
         cur_state = context.as_string() if is_backoff else context.shorten(direction="right").as_string()
         weight = weight or self.__get_alpha(context)
@@ -201,14 +204,16 @@ class KatzSmoothing:
             next_state = ngram.as_string()
         if not next_state:
             next_state = WFST.TRUE_EPS
-        if cur_state == WFST.TRUE_EPS and next_state == NGram.get_sys_token('start')\
+        if cur_state == WFST.TRUE_EPS and next_state == NGram.get_sys_token('start') \
                 or label == NGram.get_sys_token('start'):
             return
         no_state_flag = not wfst.has_state(next_state)
         if no_state_flag or not wfst.has_arc(cur_state, next_state):
             state = wfst.add_state(next_state)
             if not wfst.is_final(cur_state):
-                wfst.add_arc(cur_state, state.name, (label, label), weight)
+                if label == NGram.get_sys_token('end'):
+                    label = WFST.EPS
+                wfst.add_arc(cur_state, state.name, (label, label) if isinstance(label, str) else label, weight)
         if next_state.endswith(NGram.get_sys_token('end')):
             wfst.mark_as_final(next_state, 0)
 

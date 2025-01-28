@@ -2,7 +2,7 @@ import sys
 
 import numpy as np
 from python_speech_features import sigproc
-from data_preparation import mfcc
+from core.data_preparation import mfcc
 
 np.set_printoptions(threshold=sys.maxsize)
 

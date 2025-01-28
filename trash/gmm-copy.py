@@ -2,7 +2,7 @@ import time
 
 import numpy as np
 
-from acoustic_model.kmeans import KMeansClustering
+from core.acoustic_model.kmeans import KMeansClustering
 
 
 class GMM:
