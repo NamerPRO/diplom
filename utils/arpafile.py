@@ -7,6 +7,18 @@ from utils.ngram import NGram
 
 
 def read_arpa_lm(path: str) -> Tuple[Dict[int, Dict[str, float]], Dict[str, float], Set[str], int, float]:
+    """
+    Считывает данные о языковой модели из ARPA-файла.
+
+    Аргументы:
+        path: Путь до ARPA-файла, содержащего информацию о языковой модели.
+
+    Возвращаемое значение:
+        Кортеж, содержащий информацию о языковой модели.
+
+    Исключения:
+        FileNotFoundError: Если по указанному пути файл отсутствует.
+    """
     lmdata = (defaultdict(dict), {})
     fdata: List[int] = []
     vocabulary: Set[str] = set()
@@ -37,12 +49,23 @@ def read_arpa_lm(path: str) -> Tuple[Dict[int, Dict[str, float]], Dict[str, floa
                         prob, ngram = f.readline().split('\t')
                         lmdata[0][i + 1][ngram[:-1]] = float(prob)
     except Exception as e:
-        logging.log(logging.ERROR, 'An error occurred while attempting to read ARPA file. Is it valid?')
+        logging.log(logging.ERROR, 'Произошла ошибка чтения ARPA-файла. Он валидный?')
         raise e
     return lmdata[0], lmdata[1], vocabulary, lm_n, reserved_probability
 
 
 def write_arpa_lm(path: str, n: int, data: Tuple[Dict[int, Dict[str, float]], Dict[str, float], float]) -> None:
+    """
+    Записывает данные о языковой модели в ARPA-файл.
+
+    Аргументы:
+        path: Путь до ARPA-файла, в который требуется записать информацию о языковой модели.
+        n: Размерность n-грамм в языковой модели, которая будет записана.
+        data: Данные о языковой модели, которые необходимо записать.
+
+    Исключения:
+        FileNotFoundError: Если по указанному пути файл отсутствует.
+    """
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, 'w') as f:
@@ -66,5 +89,5 @@ def write_arpa_lm(path: str, n: int, data: Tuple[Dict[int, Dict[str, float]], Di
             f.write(' \n')
             f.write('\\end\\\n')
     except Exception as e:
-        logging.log(logging.ERROR, 'An error occurred while attempting to write in ARPA file.')
+        logging.log(logging.ERROR, 'Произошла ошибка записи в ARPA-файл.')
         raise e

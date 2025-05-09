@@ -1,7 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
   <component name="Encoding">
-    <file url="file://$PROJECT_DIR$/core/transducers/grammar/language_model/KATZ_LM_1737571351.ARP" charset="windows-1251" />
-    <file url="file://$PROJECT_DIR$/core/transducers/grammar/language_model/KATZ_LM_1737571443.ARP" charset="windows-1251" />
+    <file url="file://$PROJECT_DIR$/recognition/decoders/language_model/KATZ_LM_1740172896.ARP" charset="windows-1251" />
+    <file url="file://$PROJECT_DIR$/recognition/decoders/language_model/KATZ_LM_1741086765.ARP" charset="windows-1251" />
+    <file url="file://$PROJECT_DIR$/trash/transducers/grammar/language_model/KATZ_LM_1737571351.ARP" charset="windows-1251" />
+    <file url="file://$PROJECT_DIR$/trash/transducers/grammar/language_model/KATZ_LM_1737571443.ARP" charset="windows-1251" />
   </component>
 </project>
