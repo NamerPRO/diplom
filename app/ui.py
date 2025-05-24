@@ -98,7 +98,7 @@ class UILayer(QMainWindow):
             метрики Word Error Rate.
         6. Метрика Out-of-Vocabulary - вкладка, которая содержит функионал вычисления
             метрики Out-Of-Vocabulary.
-        7. Настройки - вкладка, на которой можно настроить систему распознования речи
+        7. Настройки - вкладка, на которой можно настроить систему распознавания речи
             и запустить процесс тренировки модели.
         """
         self.setWindowTitle("Поиск заданной последовательности данных в аудиопотоке")
@@ -135,7 +135,7 @@ class UILayer(QMainWindow):
 
         label_font = QFont()
         label_font.setPointSize(12)
-        main_select_decode_file_label = QLabel("Выберите файл для распознования")
+        main_select_decode_file_label = QLabel("Выберите файл для распознавания")
         main_select_decode_file_label.setFont(label_font)
         self.main_layout.addWidget(main_select_decode_file_label)
         self.main_selected_decode_file = self.select_file_layout("", self.main_layout, is_folder=False, file_type="wav")
@@ -147,12 +147,12 @@ class UILayer(QMainWindow):
                                                                  "Введите искомую последовательность через пробел без знаков препинания...",
                                                                  self.main_layout)
 
-        main_decoding_result = QLabel("Результат распознования")
+        main_decoding_result = QLabel("Результат распознавания")
         main_decoding_result.setFont(label_font)
         self.main_layout.addWidget(main_decoding_result)
 
         self.main_decoding_result_area = QTextEdit()
-        self.main_decoding_result_area.setPlaceholderText("В этом поле отобразится результат распознования.")
+        self.main_decoding_result_area.setPlaceholderText("В этом поле отобразится результат распознавания.")
         self.main_decoding_result_area.setReadOnly(True)
         self.main_layout.addWidget(self.main_decoding_result_area)
 
